@@ -8,6 +8,7 @@ public final class ReportFormatter {
     public static String text(ProjectMetrics p) {
         StringBuilder sb = new StringBuilder();
         sb.append("Project: ").append(p.source()).append('\n');
+        sb.append("Analysis API: ").append(p.api()).append('\n');
         sb.append(String.format(Locale.ROOT, "Classes analyzed: %d (interfaces: %d)%n",
                 p.regularClasses().size(), p.classes().size() - p.regularClasses().size()));
         sb.append(String.format(Locale.ROOT, "Max inheritance depth: %d%n", p.maxInheritanceDepth()));
@@ -28,6 +29,7 @@ public final class ReportFormatter {
     public static String json(ProjectMetrics p) {
         StringBuilder sb = new StringBuilder("{\n");
         sb.append("  \"source\": ").append(str(p.source())).append(",\n");
+        sb.append("  \"api\": ").append(str(p.api())).append(",\n");
         sb.append("  \"project\": {\n");
         sb.append("    \"classCount\": ").append(p.regularClasses().size()).append(",\n");
         sb.append("    \"interfaceCount\": ").append(p.classes().size() - p.regularClasses().size()).append(",\n");

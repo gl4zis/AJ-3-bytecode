@@ -1,37 +1,42 @@
 package org.example.metrics;
 
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.tree.ClassNode;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.Function;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 public final class JarAnalyzerHelper {
 
-    private JarAnalyzerHelper() { }
+    public enum Api {
+        ASM(AsmParser::parse),
+        CLASSFILE(ClassFileParser::parse);
 
-    public static ProjectMetrics analyzeJar(Path jar) throws IOException {
-        return analyze(jar.getFileName().toString(), readClassFiles(jar));
+        private final Function<byte[], ClassInfo> parser;
+
+        Api(Function<byte[], ClassInfo> parser) {
+            this.parser = parser;
+        }
     }
 
-    static ProjectMetrics analyze(String source, Collection<byte[]> classFiles) {
+    private JarAnalyzerHelper() { }
+
+    static ProjectMetrics analyze(String source, Collection<byte[]> classFiles, Api api) {
         JarAnalyzer analyzer = new JarAnalyzer();
-        for (byte[] b : classFiles) {
-            ClassNode node = new ClassNode();
+        for (byte[] classFile : classFiles) {
+            ClassInfo info;
             try {
-                new ClassReader(b).accept(node, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                info = api.parser.apply(classFile);
             } catch (RuntimeException ex) {
                 System.err.println("warning: skipping malformed class file: " + ex);
                 continue;
             }
-            if (node.name.endsWith("module-info") || node.name.endsWith("package-info")) {
+            if (info.name().endsWith("module-info") || info.name().endsWith("package-info")) {
                 continue;
             }
-            analyzer.putClass(node.name, node);
+            analyzer.putClass(info);
         }
 
         var result = analyzer.getClasses().stream()
@@ -39,10 +44,10 @@ public final class JarAnalyzerHelper {
                 .sorted(Comparator.comparing(ClassMetrics::name))
                 .toList();
 
-        return new ProjectMetrics(source, result);
+        return new ProjectMetrics(source, api.name(), result);
     }
 
-    private static List<byte[]> readClassFiles(Path jar) throws IOException {
+    static List<byte[]> readClassFiles(Path jar) throws IOException {
         List<byte[]> bytes = new ArrayList<>();
         try (JarFile jf = new JarFile(jar.toFile())) {
             for (Enumeration<JarEntry> e = jf.entries(); e.hasMoreElements(); ) {

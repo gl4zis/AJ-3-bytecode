@@ -2,8 +2,12 @@ package org.example.metrics;
 
 import java.util.List;
 
+/**
+ * @param api bytecode reader that produced the metrics: {@code "asm"} or {@code "classfile"}
+ */
 public record ProjectMetrics(
         String source,
+        String api,
         List<ClassMetrics> classes
 ) {
 

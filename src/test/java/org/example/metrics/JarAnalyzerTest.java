@@ -2,6 +2,8 @@ package org.example.metrics;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,7 +29,7 @@ class JarAnalyzerTest {
     private static ProjectMetrics analyze() throws IOException {
         List<byte[]> list = new ArrayList<>();
         for (String n : NAMES) list.add(bytes(P + n));
-        return JarAnalyzerHelper.analyze("test", list);
+        return JarAnalyzerHelper.analyze("test", list, JarAnalyzerHelper.Api.ASM);
     }
 
     private static ClassMetrics get(ProjectMetrics p, String suffix) {
@@ -49,7 +51,7 @@ class JarAnalyzerTest {
 
     @Test
     void missingParentMakesRoot() throws IOException {
-        ProjectMetrics p = JarAnalyzerHelper.analyze("t", List.of(bytes(P + "$Leaf")));
+        ProjectMetrics p = JarAnalyzerHelper.analyze("t", List.of(bytes(P + "$Leaf")), JarAnalyzerHelper.Api.ASM);
         assertEquals(0, get(p, "$Leaf").inheritanceDepth());
         assertEquals(0, get(p, "$Leaf").overriddenMethods());
     }
@@ -95,6 +97,7 @@ class JarAnalyzerTest {
         assertEquals(0, Main.run(new String[]{jar.toString(), "-o", report.toString()}));
         String json = Files.readString(report);
         assertTrue(json.contains("\"maxInheritanceDepth\": 2"));
+        assertTrue(json.contains("\"api\": \"ASM\""));
         assertTrue(json.contains("Fixtures$Leaf"));
     }
 
@@ -104,5 +107,27 @@ class JarAnalyzerTest {
         assertEquals(1, Main.run(new String[]{tmp.resolve("missing.jar").toString()}));
         Path notJar = Files.writeString(tmp.resolve("bad.jar"), "not a zip");
         assertEquals(2, Main.run(new String[]{notJar.toString(), "-o", tmp.resolve("r.json").toString()}));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"sample.jar", "fescar.jar", "guava.jar"})
+    void asmAndClassFileApiAgree(String jar) throws IOException {
+        List<byte[]> classes = JarAnalyzerHelper.readClassFiles(Path.of("src/main/resources", jar));
+        ProjectMetrics asm = JarAnalyzerHelper.analyze(jar, classes, JarAnalyzerHelper.Api.ASM);
+        ProjectMetrics classFile = JarAnalyzerHelper.analyze(jar, classes, JarAnalyzerHelper.Api.CLASSFILE);
+        assertEquals(asm.classes(), classFile.classes());
+        assertEquals(JarAnalyzerHelper.Api.ASM.name(), asm.api());
+        assertEquals(JarAnalyzerHelper.Api.CLASSFILE.name(), classFile.api());
+    }
+
+    @Test
+    void classFileApiOnFixtures() throws IOException {
+        List<byte[]> list = new ArrayList<>();
+        for (String n : NAMES) {
+            list.add(bytes(P + n));
+        }
+        ProjectMetrics p = JarAnalyzerHelper.analyze("test", list, JarAnalyzerHelper.Api.CLASSFILE);
+        assertEquals(2, get(p, "$Leaf").overriddenMethods());
+        assertEquals(3.0, get(p, "$Abc").abc(), 1e-9);
     }
 }

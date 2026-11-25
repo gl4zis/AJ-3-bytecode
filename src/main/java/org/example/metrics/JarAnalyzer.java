@@ -1,57 +1,43 @@
 package org.example.metrics;
 
-import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.tree.AbstractInsnNode;
-import org.objectweb.asm.tree.ClassNode;
-import org.objectweb.asm.tree.MethodInsnNode;
-import org.objectweb.asm.tree.MethodNode;
-
 import java.util.*;
+
+import static java.lang.classfile.ClassFile.*;
 
 public final class JarAnalyzer {
 
-    private final Map<String, ClassNode> classes = new LinkedHashMap<>();
+    private final Map<String, ClassInfo> classes = new LinkedHashMap<>();
     private final Map<String, Integer> depthCache = new HashMap<>();
 
-    public void putClass(String name, ClassNode node) {
-        classes.put(name, node);
+    public void putClass(ClassInfo info) {
+        classes.put(info.name(), info);
     }
 
-    public Collection<ClassNode> getClasses() {
+    public Collection<ClassInfo> getClasses() {
         return List.copyOf(classes.values());
     }
 
-    ClassMetrics metrics(ClassNode cNode) {
+    ClassMetrics metrics(ClassInfo classInfo) {
         int assignments = 0, branches = 0, conditions = 0;
-        for (MethodNode methodNode : cNode.methods) {
-            for (AbstractInsnNode insn = methodNode.instructions.getFirst(); insn != null; insn = insn.getNext()) {
-                int op = insn.getOpcode();
-                if (op >= Opcodes.ISTORE && op <= Opcodes.ASTORE) {
-                    assignments++;
-                }
-                else if (op >= Opcodes.INVOKEVIRTUAL && op <= Opcodes.INVOKEDYNAMIC) {
-                    branches++;
-                }
-                else if ((op >= Opcodes.IFEQ && op <= Opcodes.IF_ACMPNE) || op == Opcodes.IFNULL || op == Opcodes.IFNONNULL
-                        || op == Opcodes.TABLESWITCH || op == Opcodes.LOOKUPSWITCH) {
-                    conditions++;
-                }
-            }
+        for (ClassInfo.MethodInfo method : classInfo.methods()) {
+            assignments += method.assignments();
+            branches += method.branches();
+            conditions += method.conditions();
         }
         return new ClassMetrics(
-                cNode.name.replace('/', '.'),
-                isInterface(cNode),
-                depth(cNode.name),
+                classInfo.name().replace('/', '.'),
+                isInterface(classInfo),
+                depth(classInfo.name()),
                 assignments,
                 branches,
                 conditions,
-                overriddenCount(cNode),
-                cNode.fields.size()
+                overriddenCount(classInfo),
+                classInfo.fieldCount()
         );
     }
 
-    private static boolean isInterface(ClassNode c) {
-        return (c.access & Opcodes.ACC_INTERFACE) != 0;
+    private static boolean isInterface(ClassInfo c) {
+        return (c.access() & ACC_INTERFACE) != 0;
     }
 
     private int depth(String name) {
@@ -60,44 +46,37 @@ public final class JarAnalyzer {
             return cached;
         }
 
-        ClassNode classNode = classes.get(name);
+        ClassInfo classInfo = classes.get(name);
         int d = 0;
-        if (classNode != null && classNode.superName != null && classes.containsKey(classNode.superName)) {
+        if (classInfo != null && classInfo.superName() != null && classes.containsKey(classInfo.superName())) {
             depthCache.put(name, 0); // cycle guard for corrupted input
-            d = depth(classNode.superName) + 1;
+            d = depth(classInfo.superName()) + 1;
         }
         depthCache.put(name, d);
         return d;
     }
 
-    private int overriddenCount(ClassNode classNode) {
+    private int overriddenCount(ClassInfo classInfo) {
         Map<String, List<String>> bridgedDescs = new HashMap<>();
-        for (MethodNode methodNode : classNode.methods) {
-            if ((methodNode.access & Opcodes.ACC_BRIDGE) == 0) {
-                continue;
-            }
-
-            for (AbstractInsnNode insn = methodNode.instructions.getFirst(); insn != null; insn = insn.getNext()) {
-                if (insn instanceof MethodInsnNode mi && mi.name.equals(methodNode.name) && mi.owner.equals(classNode.name)) {
-                    bridgedDescs.computeIfAbsent(mi.desc, k -> new ArrayList<>()).add(methodNode.desc);
-                    break;
-                }
+        for (ClassInfo.MethodInfo method : classInfo.methods()) {
+            if (method.bridgeTarget() != null) {
+                bridgedDescs.computeIfAbsent(method.bridgeTarget(), k -> new ArrayList<>()).add(method.desc());
             }
         }
 
-        List<ClassNode> ancestors = ancestors(classNode);
+        List<ClassInfo> ancestors = ancestors(classInfo);
         int count = 0;
-        for (MethodNode method : classNode.methods) {
-            if (method.name.startsWith("<") || (method.access & (Opcodes.ACC_STATIC | Opcodes.ACC_PRIVATE
-                    | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_BRIDGE)) != 0) {
+        for (ClassInfo.MethodInfo method : classInfo.methods()) {
+            if (method.name().startsWith("<")
+                    || (method.access() & (ACC_STATIC | ACC_PRIVATE | ACC_SYNTHETIC | ACC_BRIDGE)) != 0) {
                 continue;
             }
 
-            List<String> descs = new ArrayList<>(bridgedDescs.getOrDefault(method.desc, List.of()));
-            descs.add(method.desc);
+            List<String> descs = new ArrayList<>(bridgedDescs.getOrDefault(method.desc(), List.of()));
+            descs.add(method.desc());
 
             boolean overridden = ancestors.stream().anyMatch(ancestor ->
-                    descs.stream().anyMatch(desc -> overridable(ancestor, classNode, method.name, desc)));
+                    descs.stream().anyMatch(desc -> overridable(ancestor, classInfo, method.name(), desc)));
             if (overridden) {
                 count++;
             }
@@ -105,16 +84,16 @@ public final class JarAnalyzer {
         return count;
     }
 
-    private static boolean overridable(ClassNode ancestor, ClassNode classNode, String name, String desc) {
-        for (MethodNode methodNode : ancestor.methods) {
-            if (!methodNode.name.equals(name) || !methodNode.desc.equals(desc)) {
+    private static boolean overridable(ClassInfo ancestor, ClassInfo classInfo, String name, String desc) {
+        for (ClassInfo.MethodInfo method : ancestor.methods()) {
+            if (!method.name().equals(name) || !method.desc().equals(desc)) {
                 continue;
             }
-            if ((methodNode.access & (Opcodes.ACC_STATIC | Opcodes.ACC_PRIVATE)) != 0) {
+            if ((method.access() & (ACC_STATIC | ACC_PRIVATE)) != 0) {
                 return false;
             }
-            boolean packagePrivate = (methodNode.access & (Opcodes.ACC_PUBLIC | Opcodes.ACC_PROTECTED)) == 0;
-            return !packagePrivate || pkg(ancestor.name).equals(pkg(classNode.name));
+            boolean packagePrivate = (method.access() & (ACC_PUBLIC | ACC_PROTECTED)) == 0;
+            return !packagePrivate || pkg(ancestor.name()).equals(pkg(classInfo.name()));
         }
         return false;
     }
@@ -124,25 +103,25 @@ public final class JarAnalyzer {
         return i < 0 ? "" : internalName.substring(0, i);
     }
 
-    private List<ClassNode> ancestors(ClassNode classNode) {
+    private List<ClassInfo> ancestors(ClassInfo classInfo) {
         Set<String> seen = new LinkedHashSet<>();
         Deque<String> queue = new ArrayDeque<>();
-        if (classNode.superName != null) {
-            queue.add(classNode.superName);
+        if (classInfo.superName() != null) {
+            queue.add(classInfo.superName());
         }
-        queue.addAll(classNode.interfaces);
+        queue.addAll(classInfo.interfaces());
 
         while (!queue.isEmpty()) {
             String name = queue.poll();
-            ClassNode node = classes.get(name);
+            ClassInfo info = classes.get(name);
 
-            if (node == null || !seen.add(name)) {
+            if (info == null || !seen.add(name)) {
                 continue;
             }
-            if (node.superName != null) {
-                queue.add(node.superName);
+            if (info.superName() != null) {
+                queue.add(info.superName());
             }
-            queue.addAll(node.interfaces);
+            queue.addAll(info.interfaces());
         }
         return seen.stream().map(classes::get).toList();
     }
