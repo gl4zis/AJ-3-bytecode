@@ -29,6 +29,16 @@ application {
     mainClass.set("org.example.metrics.Main")
 }
 
+
+tasks.jar {
+    manifest { attributes("Main-Class" to application.mainClass) }
+    exclude("org/example/agent/**")
+    from({ configurations.runtimeClasspath.get().map { zipTree(it) } }) {
+        exclude("module-info.class", "META-INF/versions/**/module-info.class")
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 val agentJar = tasks.register<Jar>("agentJar") {
     archiveFileName.set("coverage-agent.jar")
     from(sourceSets.main.get().output) { include("org/example/agent/**") }

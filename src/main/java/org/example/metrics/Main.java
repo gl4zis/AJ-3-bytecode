@@ -8,10 +8,11 @@ import java.util.Locale;
 
 public final class Main {
     private static final String USAGE = """
-            Usage: analyzer <file.jar> [-o <report.json>] [--api asm|classfile] [--compare]
+            Usage: analyzer <file.jar> [-o <report.json>] [--api asm|classfile] [--compare] [-q]
               -o, --output   JSON report path (default: <jar-name>-report.json)
               --api          bytecode reader: asm (default) or classfile (java.lang.classfile, JDK 24+)
-              --compare      run both readers, check their metrics are identical and print timings""";
+              --compare      run both readers, check their metrics are identical and print timings
+              -q, --quiet    do not print the report to the console, only write the JSON file""";
 
     private static final int COMPARE_RUNS = 5;
 
@@ -41,7 +42,9 @@ public final class Main {
         }
 
         ProjectMetrics metrics = JarAnalyzerHelper.analyze(source, classFiles, programArgs.api);
-        System.out.print(ReportFormatter.text(metrics));
+        if (!programArgs.quiet) {
+            System.out.print(ReportFormatter.text(metrics));
+        }
         return writeJsonReport(metrics, programArgs.out);
     }
 
@@ -49,6 +52,7 @@ public final class Main {
         Path jar = null, out = null;
         JarAnalyzerHelper.Api api = JarAnalyzerHelper.Api.ASM;
         boolean compare = false;
+        boolean quiet = false;
         for (int i = 0; i < args.length; i++) {
             if (args[i].equals("-o") || args[i].equals("--output")) {
                 if (++i >= args.length) {
@@ -66,6 +70,8 @@ public final class Main {
                 }
             } else if (args[i].equals("--compare")) {
                 compare = true;
+            } else if (args[i].equals("-q") || args[i].equals("--quiet")) {
+                quiet = true;
             } else if (args[i].equals("-h") || args[i].equals("--help")) {
                 throw new InputException("", 0);
             } else if (jar == null) {
@@ -84,7 +90,7 @@ public final class Main {
             out = Path.of(jar.getFileName().toString().replaceFirst("\\.jar$", "") + "-report.json");
         }
 
-        return new ProgramArgs(jar, out, api, compare);
+        return new ProgramArgs(jar, out, api, compare, quiet);
     }
 
     private static int compareApis(String source, List<byte[]> classFiles) {
@@ -125,7 +131,7 @@ public final class Main {
         return 0;
     }
 
-    private record ProgramArgs(Path jar, Path out, JarAnalyzerHelper.Api api, boolean compare) { }
+    private record ProgramArgs(Path jar, Path out, JarAnalyzerHelper.Api api, boolean compare, boolean quiet) { }
 
     private static class InputException extends Exception {
         private final int code;
